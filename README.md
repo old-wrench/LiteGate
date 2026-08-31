@@ -50,7 +50,7 @@
   每次调用统计归属到对应使用者（同事），看板支持「按使用者」分别或合并查看
 - 用量计数：请求数与工具调用次数(tool_calls)一并入表聚合
 - 模型别名路由：同一真实模型可配多条记录（不同 alias / key / tag），多账号用量隔离
-- 参数合并：每条渠道可预设 `thinking_budget` / `max_tokens` / `max_context_tokens`，
+- 参数合并：每条渠道可预设 `max_tokens` / `max_context_tokens`，
   支持「强制覆盖客户端参数」开关
 - 流式：SSE 原样字节级透传；按约定**不解析 SSE 提取 usage**，token 记 0 并打标记
 - 错误：上游 4xx/5xx 报文原样透传，不做包装、不做重试降级
@@ -126,7 +126,6 @@ upstreams:
     api_base: https://api.example.com/v1
     api_key: sk-real-key-aaaa       # 留空则不携带 Authorization 头
     tag: plan-account-a             # 仅用于统计区分账号，不参与转发
-    thinking_budget: null           # 思考强度预设，可留空(null)
     max_tokens: 8192                # 最大输出预设
     max_context_tokens: 128000      # 上下文窗口上限预设
     force_override_client_params: false
@@ -135,7 +134,6 @@ upstreams:
     api_base: https://api.example.com/v1
     api_key: sk-real-key-bbbb
     tag: plan-account-b
-    thinking_budget: null
     max_tokens: null
     max_context_tokens: null
     force_override_client_params: true
@@ -146,7 +144,7 @@ Web 面板改动会原子写回此文件并即时生效；用编辑器手工修�
 
 ### 参数优先级规则
 
-对 `thinking_budget`、`max_tokens`、`max_context_tokens` 逐个字段判断：
+对 `max_tokens`、`max_context_tokens` 逐个字段判断：
 
 | force_override_client_params | 客户端传了该参数 | 结果 |
 | --- | --- | --- |
@@ -154,8 +152,8 @@ Web 面板改动会原子写回此文件并即时生效；用编辑器手工修�
 | ❌ false | 传了（非 null） | 客户端值胜出 |
 | ❌ false | 没传 / null | 有预设 → 注入预设；无预设 → 原样透传 |
 
-> 说明：三个预设值以**同名字段**合并进转发 JSON（如 `thinking_budget` 就是顶层
-> `"thinking_budget"` 字段），适配 DeepSeek/Qwen/GLM 及各类中转的常见约定；
+> 说明：预设值以**同名字段**合并进转发 JSON（如 `max_context_tokens` 就是顶层
+> `"max_context_tokens"` 字段），适配 DeepSeek/Qwen/GLM 及各类中转的常见约定；
 > 若个别厂商要求特定嵌套格式而不认识该字段，通常会忽略——届时可通过网关侧
 > "留空"避免干扰。
 

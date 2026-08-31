@@ -41,6 +41,14 @@ function toast(msg, isErr) {
 }
 
 function fmtN(n) { return Number(n || 0).toLocaleString("en-US"); }
+/* 价格紧凑记法：128000 -> 128k，1048576 -> 1.05M，小数原样 */
+function fmtPrice(v) {
+  if (v == null) return "—";
+  var n = Number(v);
+  if (n >= 1e6) return Number((n / 1e6).toFixed(2)) + "M";
+  if (n >= 1e3) return Number((n / 1e3).toFixed(1)) + "k";
+  return String(n);
+}
 
 /* 每轮/分组缓存命中率：cached ÷ prompt；输入为0时无法计算，显示 — */
 function hitRate(cached, prompt) {
@@ -341,11 +349,23 @@ function renderUpstreams(list) {
     if (u.tag) tdTag.appendChild(el("span", "chip tag", u.tag));
     else { tdTag.className = "dim-text"; tdTag.textContent = "—"; }
     tr.appendChild(tdTag);
-    [["budget", u.thinking_budget], ["maxtok", u.max_tokens], ["maxctx", u.max_context_tokens]]
-      .forEach(function (p) {
-        tr.appendChild(el("td", "num" + (p[1] == null ? " dim0" : ""),
-          p[1] == null ? "—" : fmtN(p[1])));
-      });
+
+    /* 价格：输入/输出/缓存（元/百万Tokens），紧凑记法不换行 */
+    var hasPrice = u.price_input != null || u.price_output != null || u.price_cache != null;
+    var priceTxt = hasPrice
+      ? [fmtPrice(u.price_input), fmtPrice(u.price_output), fmtPrice(u.price_cache)].join(" / ")
+      : "—";
+    var tdPrice = el("td", "num mono nowrap" + (hasPrice ? "" : " dim0"), priceTxt);
+    tdPrice.title = "输入 / 输出 / 缓存命中（元 / 百万Tokens）";
+    tr.appendChild(tdPrice);
+    /* 参数预设合并为一列：max_tokens / max_context_tokens */
+    var presets = [];
+    if (u.max_tokens != null) presets.push("max " + fmtN(u.max_tokens));
+    if (u.max_context_tokens != null) presets.push("ctx " + fmtCompact(u.max_context_tokens));
+    var tdPreset = el("td", "num mono" + (presets.length ? " dim-text" : " dim0"),
+      presets.length ? presets.join(" / ") : "—");
+    tdPreset.title = "预设：max_tokens / max_context_tokens（在编辑弹窗中维护）";
+    tr.appendChild(tdPreset);
 
     var tdForce = document.createElement("td");
     if (u.force_override_client_params) {
@@ -364,6 +384,11 @@ function renderUpstreams(list) {
     tr.appendChild(tdPsu);
 
     var tdOps = el("td", "ops");
+    var bCopyUp = el("button", "btn sm", "复制");
+    bCopyUp.type = "button";
+    bCopyUp.addEventListener("click", function () { openModal(u, true); });
+    tdOps.appendChild(bCopyUp);
+
     var bEdit = el("button", "btn sm", "编辑");
     bEdit.type = "button";
     bEdit.addEventListener("click", function () { openModal(u); });
@@ -394,18 +419,23 @@ async function refreshUpstreams() {
 $("#btn-refresh-upstreams").addEventListener("click", refreshUpstreams);
 
 /* ---------- 上游弹窗 ---------- */
-function openModal(item) {
+function openModal(item, isCopy) {
   var isNew = !item;
-  $("#modal-title").textContent = isNew ? "新增上游渠道" : "编辑上游渠道：" + item.alias;
-  $("#f-id").value = isNew ? "" : item.id;
-  $("#f-alias").value = isNew ? "" : item.alias;
-  $("#f-real").value = isNew ? "" : item.real_model;
-  $("#f-base").value = isNew ? "" : item.api_base;
-  $("#f-key").value = isNew ? "" : (item.api_key || "");
-  $("#f-tag").value = isNew ? "" : (item.tag || "");
-  $("#f-budget").value = isNew || item.thinking_budget == null ? "" : item.thinking_budget;
+  var blank = isNew || !!isCopy;   /* 新增/复制：id清空按新增保存，别名必改 */
+  $("#modal-title").textContent = isNew ? "新增上游渠道"
+      : (isCopy ? "复制上游渠道：" + item.alias + "（请修改别名）"
+                : "编辑上游渠道：" + item.alias);
+  $("#f-id").value = blank ? "" : item.id;
+  $("#f-alias").value = blank ? "" : item.alias;
+  $("#f-real").value = blank ? "" : item.real_model;
+  $("#f-base").value = blank ? "" : item.api_base;
+  $("#f-key").value = blank ? "" : (item.api_key || "");
+  $("#f-tag").value = blank ? "" : (item.tag || "");
   $("#f-maxtok").value = isNew || item.max_tokens == null ? "" : item.max_tokens;
   $("#f-maxctx").value = isNew || item.max_context_tokens == null ? "" : item.max_context_tokens;
+  $("#f-price-in").value = isNew || item.price_input == null ? "" : item.price_input;
+  $("#f-price-out").value = isNew || item.price_output == null ? "" : item.price_output;
+  $("#f-price-cache").value = isNew || item.price_cache == null ? "" : item.price_cache;
   $("#f-force").checked = !isNew && !!item.force_override_client_params;
   $("#f-psu").checked = !isNew && !!item.parse_stream_usage;
   $("#f-key-show").checked = false;
@@ -432,9 +462,11 @@ $("#up-form").addEventListener("submit", async function (ev) {
     api_base: $("#f-base").value.trim(),
     api_key: $("#f-key").value,
     tag: $("#f-tag").value.trim(),
-    thinking_budget: numOrNull("#f-budget"),
     max_tokens: numOrNull("#f-maxtok"),
     max_context_tokens: numOrNull("#f-maxctx"),
+    price_input: numOrNull("#f-price-in"),
+    price_output: numOrNull("#f-price-out"),
+    price_cache: numOrNull("#f-price-cache"),
     force_override_client_params: $("#f-force").checked,
     parse_stream_usage: $("#f-psu").checked
   };
@@ -552,6 +584,15 @@ function fmtCompact(n) {
   if (abs >= 1e4) return (n / 1e4).toFixed(1) + "\u4e07";
   return fmtN(n);
 }
+/* 成本金额：小额保留4位小数，够大则收敛精度；未维护(NULL)显示 — */
+function fmtCost(v) {
+  if (v == null || isNaN(Number(v))) return "\u2014";
+  var n = Number(v);
+  if (n === 0) return "\u00a50";
+  if (n < 1) return "\u00a5" + n.toFixed(4);
+  if (n < 100) return "\u00a5" + n.toFixed(3);
+  return "\u00a5" + n.toFixed(2);
+}
 /* 命中率配色：>=30% 绿 · >0 琥珀 · 无命中/无输入 灰 */
 function rateClass(cached, prompt) {
   prompt = Number(prompt);
@@ -568,7 +609,7 @@ function drawSumTable(sel, rows, barCls) {
   if (!rows || !rows.length) {
     var tr0 = document.createElement("tr");
     var td0 = el("td", "dim-text", "暂无数据");
-    td0.colSpan = 8;
+    td0.colSpan = 9;
     tr0.appendChild(td0);
     tb.appendChild(tr0);
     return;
@@ -598,6 +639,8 @@ function drawSumTable(sel, rows, barCls) {
     tr.appendChild(el("td", "num c-cache" + (Number(r.cached || 0) ? "" : " dim0"), fmtN(r.cached || 0)));
     tr.appendChild(el("td", "num " + rateClass(r.cached, r.prompt), hitRate(r.cached, r.prompt)));
     tr.appendChild(el("td", "num c-total", fmtN(r.total)));
+    tr.appendChild(el("td", "num c-cost" + (r.cost != null ? "" : " dim0"),
+      fmtCost(r.cost)));
     tb.appendChild(tr);
   });
 }
@@ -610,7 +653,8 @@ function renderSummary(s) {
     ["k3", "\u8f93\u5165 Tokens", fmtCompact(g.prompt), "\u5b8c\u6574\u503c " + fmtN(g.prompt)],
     ["k4", "\u8f93\u51fa Tokens", fmtCompact(g.completion), "\u5b8c\u6574\u503c " + fmtN(g.completion)],
     ["k5", "\u7f13\u5b58\u547d\u4e2d", fmtCompact(g.cached || 0), "\u547d\u4e2d\u7387 " + hitRate(g.cached, g.prompt)],
-    ["k6", "\u5408\u8ba1 Tokens", fmtCompact(g.total), "\u8f93\u5165 + \u8f93\u51fa"]
+    ["k6", "\u5408\u8ba1 Tokens", fmtCompact(g.total), "\u8f93\u5165 + \u8f93\u51fa"],
+    ["k7", "\u4f30\u7b97\u6210\u672c", fmtCost(g.cost), "\u6309\u6e20\u9053\u5355\u4ef7\u6298\u7b97 \u00b7 \u672a\u7ef4\u62a4\u4ef7\u683c\u7684\u6e20\u9053\u4e0d\u8ba1\u5165"]
   ];
   var grid = $("#kpi-grid");
   grid.innerHTML = "";
@@ -663,6 +707,8 @@ function renderLogs(data) {
       hitRate(r.cached_tokens, r.prompt_tokens)));
     tr.appendChild(el("td", "num c-tools" + (Number(r.tool_calls) ? "" : " dim0"),
       fmtN(r.tool_calls)));
+    tr.appendChild(el("td", "num" + (r.cost != null ? " c-cost" : " dim0"),
+      fmtCost(r.cost)));
 
     var tdNote = document.createElement("td");
     if (Number(r.is_stream) === 1 &&

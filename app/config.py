@@ -99,6 +99,25 @@ def _opt_int(value: Any, field: str) -> Optional[int]:
     return iv
 
 
+def _opt_float(value: Any, field: str) -> Optional[float]:
+    """规整为「非负数 或 None（留空）」，用于单价等允许小数的可选项。"""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ConfigError(f"{field} 应为非负数字或留空")
+    if isinstance(value, str):
+        value = value.strip()
+        if value == "":
+            return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        raise ConfigError(f"{field} 应为非负数字或留空") from None
+    if f < 0:
+        raise ConfigError(f"{field} 不能为负数")
+    return f
+
+
 def normalize_upstream(item: Any) -> dict:
     """校验并规整一条上游渠道配置。多余字段会被丢弃，缺省字段补默认值。"""
     if not isinstance(item, dict):
@@ -129,6 +148,9 @@ def normalize_upstream(item: Any) -> dict:
     }
     for f in PARAM_KEYS:
         upstream[f] = _opt_int(item.get(f), f)
+    # 单价（元 / 百万Tokens），选填：用于看板估算成本，留空则该渠道不计成本
+    for f in ("price_input", "price_output", "price_cache"):
+        upstream[f] = _opt_float(item.get(f), f)
     upstream["force_override_client_params"] = item.get(
         "force_override_client_params"
     ) in (True, "true", "True", 1)

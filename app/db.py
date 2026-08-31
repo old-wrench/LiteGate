@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS logs (
     completion_tokens INTEGER NOT NULL DEFAULT 0,
     cached_tokens     INTEGER NOT NULL DEFAULT 0,   -- 输入中命中上游缓存的token(<=prompt)
     tool_calls        INTEGER NOT NULL DEFAULT 0,   -- 本次响应工具调用次数
-    is_stream         INTEGER NOT NULL DEFAULT 0    -- 1=流式请求
+    is_stream         INTEGER NOT NULL DEFAULT 0,   -- 1=流式请求
+    cost              REAL                          -- 估算成本(元)，未维护价格为NULL
 );
 """
 
@@ -69,14 +70,17 @@ class StatsDB:
     def _migrate(self) -> None:
         """轻量迁移：给旧版本创建的库补齐新增列，历史数据不丢。"""
         cols = {r[1] for r in self._conn.execute("PRAGMA table_info(logs)")}
-        for col in ("cached_tokens", "client_name", "tool_calls"):
-            if col not in cols:
-                suffix = "TEXT" if col == "client_name" else "INTEGER"
-                self._conn.execute(
-                    "ALTER TABLE logs ADD COLUMN " + col
-                    + (" TEXT NOT NULL DEFAULT ''" if suffix == "TEXT"
-                       else " INTEGER NOT NULL DEFAULT 0")
-                )
+        if "cached_tokens" not in cols:
+            self._conn.execute(
+                "ALTER TABLE logs ADD COLUMN cached_tokens INTEGER NOT NULL DEFAULT 0")
+        if "client_name" not in cols:
+            self._conn.execute(
+                "ALTER TABLE logs ADD COLUMN client_name TEXT NOT NULL DEFAULT ''")
+        if "tool_calls" not in cols:
+            self._conn.execute(
+                "ALTER TABLE logs ADD COLUMN tool_calls INTEGER NOT NULL DEFAULT 0")
+        if "cost" not in cols:
+            self._conn.execute("ALTER TABLE logs ADD COLUMN cost REAL")
 
     # ------------------------------------------------------------------
     def insert(
@@ -92,12 +96,13 @@ class StatsDB:
         cached_tokens: int = 0,
         tool_calls: int = 0,
         is_stream: bool = False,
+        cost: Optional[float] = None,
     ) -> None:
         with self._lock:
             self._conn.execute(
                 "INSERT INTO logs(create_time, alias, real_model, upstream_tag,"
                 " client_name, prompt_tokens, completion_tokens, cached_tokens,"
-                " tool_calls, is_stream) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                " tool_calls, is_stream, cost) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     float(create_time),
                     str(alias),
@@ -109,6 +114,7 @@ class StatsDB:
                     int(cached_tokens or 0),
                     int(tool_calls or 0),
                     1 if is_stream else 0,
+                    None if cost is None else float(cost),
                 ),
             )
             self._conn.commit()
@@ -185,7 +191,8 @@ class StatsDB:
             " COALESCE(SUM(prompt_tokens),0)        AS pt,"
             " COALESCE(SUM(completion_tokens),0)    AS ct,"
             " COALESCE(SUM(cached_tokens),0)        AS cc,"
-            " COALESCE(SUM(prompt_tokens + completion_tokens),0) AS tt"
+            " COALESCE(SUM(prompt_tokens + completion_tokens),0) AS tt,"
+            " SUM(cost)                             AS cost"  # 全为NULL时保持NULL
         )
         with self._lock:
             for key, col in _GROUP_COLUMNS.items():
@@ -197,7 +204,7 @@ class StatsDB:
                 out["by_" + key] = [
                     {"key": r["k"], "requests": r["req"], "tools": r["tc"],
                      "prompt": r["pt"], "completion": r["ct"], "cached": r["cc"],
-                     "total": r["tt"]}
+                     "total": r["tt"], "cost": r["cost"]}
                     for r in rows
                 ]
             g = self._conn.execute(
@@ -207,6 +214,7 @@ class StatsDB:
         out["grand"] = {
             "requests": g[0], "tools": g[1], "prompt": g[2],
             "completion": g[3], "cached": g[4], "total": g[5],
+            "cost": g[6],
         }
         return out
 

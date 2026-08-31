@@ -54,8 +54,8 @@
       <div class="scroll-x">
         <table class="tbl">
           <thead><tr>
-            <th>别名 alias</th><th>真实模型</th><th>API 地址</th><th>API Key</th><th>标签 tag</th>
-            <th class="num">思考预算</th><th class="num">max_tokens</th><th class="num">max_ctx</th>
+            <th>别名 alias</th><th>真实模型</th><th>API 地址</th><th>API Key</th><th>标签 tag</th><th class="num">价格 元/M</th>
+            <th class="num">预设 max/ctx</th>
             <th>强制覆盖</th><th>流式usage</th><th class="ops">操作</th>
           </tr></thead>
           <tbody id="upstreams-body"></tbody>
@@ -128,19 +128,19 @@
     <div class="sum-grid">
       <div class="card sum-card">
         <div class="card-head"><h2><span class="dot d-client"></span>按 使用者</h2><span class="dim">分发Key归属</span></div>
-        <table class="tbl"><thead><tr><th>使用者</th><th class="num">请求</th><th class="num">工具</th><th class="num">输入</th><th class="num">输出</th><th class="num">缓存</th><th class="num">命中率</th><th class="num">合计</th></tr></thead><tbody id="sum-client"></tbody></table>
+        <table class="tbl"><thead><tr><th>使用者</th><th class="num">请求</th><th class="num">工具</th><th class="num">输入</th><th class="num">输出</th><th class="num">缓存</th><th class="num">命中率</th><th class="num">合计</th><th class="num">成本</th></tr></thead><tbody id="sum-client"></tbody></table>
       </div>
       <div class="card sum-card">
         <div class="card-head"><h2><span class="dot d-tag"></span>按 Tag</h2><span class="dim">CodingPlan 账号</span></div>
-        <table class="tbl"><thead><tr><th>tag</th><th class="num">请求</th><th class="num">工具</th><th class="num">输入</th><th class="num">输出</th><th class="num">缓存</th><th class="num">命中率</th><th class="num">合计</th></tr></thead><tbody id="sum-tag"></tbody></table>
+        <table class="tbl"><thead><tr><th>tag</th><th class="num">请求</th><th class="num">工具</th><th class="num">输入</th><th class="num">输出</th><th class="num">缓存</th><th class="num">命中率</th><th class="num">合计</th><th class="num">成本</th></tr></thead><tbody id="sum-tag"></tbody></table>
       </div>
       <div class="card sum-card">
         <div class="card-head"><h2><span class="dot d-alias"></span>按 别名</h2><span class="dim">alias</span></div>
-        <table class="tbl"><thead><tr><th>alias</th><th class="num">请求</th><th class="num">工具</th><th class="num">输入</th><th class="num">输出</th><th class="num">缓存</th><th class="num">命中率</th><th class="num">合计</th></tr></thead><tbody id="sum-alias"></tbody></table>
+        <table class="tbl"><thead><tr><th>alias</th><th class="num">请求</th><th class="num">工具</th><th class="num">输入</th><th class="num">输出</th><th class="num">缓存</th><th class="num">命中率</th><th class="num">合计</th><th class="num">成本</th></tr></thead><tbody id="sum-alias"></tbody></table>
       </div>
       <div class="card sum-card">
         <div class="card-head"><h2><span class="dot d-model"></span>按 真实模型</h2><span class="dim">real_model</span></div>
-        <table class="tbl"><thead><tr><th>real_model</th><th class="num">请求</th><th class="num">工具</th><th class="num">输入</th><th class="num">输出</th><th class="num">缓存</th><th class="num">命中率</th><th class="num">合计</th></tr></thead><tbody id="sum-model"></tbody></table>
+        <table class="tbl"><thead><tr><th>real_model</th><th class="num">请求</th><th class="num">工具</th><th class="num">输入</th><th class="num">输出</th><th class="num">缓存</th><th class="num">命中率</th><th class="num">合计</th><th class="num">成本</th></tr></thead><tbody id="sum-model"></tbody></table>
       </div>
     </div>
 
@@ -150,7 +150,7 @@
       </div>
       <div class="table-wrap">
         <table class="tbl logs">
-          <thead><tr><th>时间</th><th>使用者</th><th>别名</th><th>模型</th><th>Tag</th><th class="num">输入</th><th class="num">输出</th><th class="num">缓存</th><th class="num">命中率</th><th class="num">工具</th><th>备注</th></tr></thead>
+          <thead><tr><th>时间</th><th>使用者</th><th>别名</th><th>模型</th><th>Tag</th><th class="num">输入</th><th class="num">输出</th><th class="num">缓存</th><th class="num">命中率</th><th class="num">工具</th><th class="num">成本</th><th>备注</th></tr></thead>
           <tbody id="logs-body"></tbody>
         </table>
         <div id="logs-empty" class="empty" hidden>当前筛选条件下没有统计记录。</div>
@@ -199,14 +199,21 @@
           <span class="check-row standalone"><input type="checkbox" id="f-force"><em>force_override_client_params</em></span>
           <small class="hint">开启后下方预设值无条件覆盖客户端传入的同名参数</small>
         </label>
-        <label>思考预算 thinking_budget
-          <input id="f-budget" type="number" min="1" step="1" placeholder="留空不干预">
-        </label>
         <label>最大输出 max_tokens
           <input id="f-maxtok" type="number" min="1" step="1" placeholder="留空不干预">
         </label>
         <label>上下文上限 max_context_tokens
           <input id="f-maxctx" type="number" min="1" step="1" placeholder="留空不干预">
+        </label>
+        <div class="form-sec">价格（元 / 百万 Tokens，选填）</div>
+        <label>输入价格
+          <input id="f-price-in" type="number" min="0" step="0.0001" placeholder="留空不计成本">
+        </label>
+        <label>输出价格
+          <input id="f-price-out" type="number" min="0" step="0.0001" placeholder="留空不计成本">
+        </label>
+        <label>缓存命中价格
+          <input id="f-price-cache" type="number" min="0" step="0.0001" placeholder="留空按输入价估算">
         </label>
         <div class="form-sec">流式用量统计</div>
         <label class="full">parse_stream_usage

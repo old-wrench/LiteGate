@@ -152,15 +152,16 @@ def main() -> int:
             {"alias": "mock-basic", "real_model": "mock-real",
              "api_base": "http://127.0.0.1:%d/v1" % MOCK_PORT,
              "api_key": "mk-basic", "tag": "acct-a",
-             "max_tokens": 222, "force_override_client_params": False},
+             "max_tokens": 222, "force_override_client_params": False,
+             "price_input": 2, "price_output": 8, "price_cache": 1},
             {"alias": "preset-soft", "real_model": "mock-real",
              "api_base": "http://127.0.0.1:%d/v1" % MOCK_PORT,
              "api_key": "mk-soft", "tag": "acct-b",
-             "thinking_budget": 1000, "max_context_tokens": 128000},
+             "max_tokens": 1000, "max_context_tokens": 128000},
             {"alias": "force-on", "real_model": "mock-real",
              "api_base": "http://127.0.0.1:%d/v1" % MOCK_PORT,
              "api_key": "mk-force", "tag": "acct-c",
-             "thinking_budget": 2048, "max_tokens": 999,
+             "max_tokens": 999,
              "max_context_tokens": 128000,
              "force_override_client_params": True},
             {"alias": "sse-tap", "real_model": "mock-real",
@@ -239,7 +240,10 @@ def main() -> int:
         row = fetch_logs(client)["rows"][0]
         expect(row["prompt_tokens"] == 123 and row["completion_tokens"] == 45
                and row["cached_tokens"] == 7, "usage 应入库(123/45/缓存7)")
-        ok("转发：别名替换 + usage(输入123/输出45/缓存7) 入库；客户端参数优先")
+        expect(row["cost"] is not None
+               and abs(row["cost"] - 0.000599) < 1e-9,
+               "成本应按单价折算 0.000599，实际 " + str(row["cost"]))
+        ok("转发：别名替换 + usage(123/45/缓存7)+成本(0.000599) 入库；客户端参数优先")
 
         # ---- 4. 多Key归属统计 --------------------------------------------
         r = client.post("/v1/chat/completions", json=chat_body("mock-basic"),
@@ -258,23 +262,26 @@ def main() -> int:
                         headers=HDR)
         expect(r.status_code == 200, "preset-soft 应200")
         s = RECEIVED[-1]
-        expect(s.get("thinking_budget") == 1000 and s.get("max_context_tokens") == 128000
-               and "max_tokens" not in s, "预设注入不符")
+        expect(s.get("max_tokens") == 1000 and s.get("max_context_tokens") == 128000,
+               "预设注入不符")
         add_row()
+        expect(fetch_logs(client)["rows"][0]["cost"] is None,
+               "未维护价格的渠道成本应为 NULL")
         ok("参数：未传 -> 注入预设；未预设字段不注入")
 
         r = client.post("/v1/chat/completions",
-                        json=chat_body("preset-soft", thinking_budget=555), headers=HDR)
-        expect(RECEIVED[-1].get("thinking_budget") == 555, "客户端值应优先")
+                        json=chat_body("preset-soft", max_tokens=555), headers=HDR)
+        expect(RECEIVED[-1].get("max_tokens") == 555
+               and RECEIVED[-1].get("max_context_tokens") == 128000, "客户端值应优先")
         add_row()
         ok("参数：关闭强覆盖 -> 客户端值(555)覆盖预设(1000)")
 
         r = client.post("/v1/chat/completions",
-                        json=chat_body("force-on", thinking_budget=8, max_tokens=7),
+                        json=chat_body("force-on", max_tokens=8, max_context_tokens=7),
                         headers=HDR)
         s = RECEIVED[-1]
-        expect(s.get("thinking_budget") == 2048 and s.get("max_tokens") == 999
-               and s.get("max_context_tokens") == 128000, "强覆盖失败")
+        expect(s.get("max_tokens") == 999 and s.get("max_context_tokens") == 128000,
+               "强覆盖失败")
         add_row()
         ok("参数：强覆盖开启 -> 全部替换为预设")
 
@@ -371,6 +378,9 @@ def main() -> int:
         expect(g["requests"] == acc["rows"], "请求数聚合 %s != %s" % (g["requests"], acc["rows"]))
         expect(g["total"] == acc["tokens"], "token合计 %s != %s" % (g["total"], acc["tokens"]))
         expect(g["tools"] == acc["tools"], "工具合计 %s != %s" % (g["tools"], acc["tools"]))
+        expect(g["cost"] is not None
+               and abs(g["cost"] - 3 * 0.000599) < 1e-9,
+               "成本合计应为 3x0.000599，实际 " + str(g["cost"]))
         byc = {x["key"]: x for x in sm["by_client"]}
         n_main = sum(1 for c in ["主账号"] * 99 if c)  # placeholder avoided below
         main_cnt = byc["主账号"]["requests"]

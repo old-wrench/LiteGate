@@ -310,3 +310,6 @@ textarea{
 }
 textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(91,140,255,.18)}
 textarea:disabled{opacity:.45}
+.kpi.k7::before{background:linear-gradient(90deg,#2dd4bf,#5eead4)}
+.c-cost{color:#fbbf24}
+.tbl td.nowrap{white-space:nowrap}

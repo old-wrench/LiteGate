@@ -29,7 +29,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 class Gateway:
     #: 可在网关侧预设/覆盖的请求体参数
-    PARAM_KEYS = ("max_tokens", "thinking_budget", "max_context_tokens")
+    PARAM_KEYS = ("max_tokens", "max_context_tokens")
 
     def __init__(self, store, db):
         self.store = store
@@ -156,6 +156,27 @@ def _count_tool_calls_nonstream(data) -> int:
     return 1 if c0.get("finish_reason") == "tool_calls" else 0
 
 
+def _estimate_cost(rec: dict, up: dict) -> Optional[float]:
+    """按渠道维护的单价（元/百万Tokens）折算本次请求成本。
+
+    口径与厂商一致：缓存命中的输入按缓存价计，其余输入按输入价计；
+    缓存价未维护时，缓存部分按输入价估算（保守、不失真）。
+    三项全未维护、或本次没有任何 usage（流式未采集）时返回 None。
+    """
+    pi, po, pc = up.get("price_input"), up.get("price_output"), up.get("price_cache")
+    if pi is None and po is None:
+        return None
+    p = int(rec.get("prompt_tokens") or 0)
+    c = int(rec.get("completion_tokens") or 0)
+    if p == 0 and c == 0:
+        return None
+    cached = min(int(rec.get("cached_tokens") or 0), p)
+    pc_eff = pi if pc is None else pc
+    cost = ((p - cached) * (pi or 0.0) + cached * (pc_eff or 0.0)
+            + c * (po or 0.0)) / 1e6
+    return round(cost, 8)
+
+
 def create_gateway_router(gateway: Gateway) -> APIRouter:
     router = APIRouter()
 
@@ -261,11 +282,14 @@ def create_gateway_router(gateway: Gateway) -> APIRouter:
             "cached_tokens": 0,
             "tool_calls": 0,
             "is_stream": 1 if want_stream else 0,
+            "cost": None,
         }
 
         async def _insert_safe() -> None:
             """入库失败只记日志，绝不影响正在进行的响应。"""
             try:
+                # 成本按请求发生时刻的渠道单价折算，入库后不随改价波动
+                rec["cost"] = _estimate_cost(rec, up)
                 gateway.db.insert(**rec)
             except Exception as exc:
                 print("[gateway] 用量入库失败：" + str(exc), flush=True)
