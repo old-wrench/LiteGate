@@ -1,5 +1,7 @@
 # LiteGate · 极简LLM代理网关
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 面向个人/小团队本地使用的 LLM 代理网关：把多家厂商 **CodingPlan 订阅密钥** 统一收敛到
 一个 OpenAI 兼容入口，对外分发若干把**虚拟 API Key**（可发给不同同事，按 Key 分别统计、
 也可合并看总计）；内置 Web 面板管理上游渠道与查看 Token 用量。**首次启动即局域网模式**：
@@ -303,6 +305,7 @@ FROM logs;
 
 ```
 LiteGate/
+├── LICENSE                  # MIT 开源协议
 ├── start.bat              # Windows 一键启动（双击即可）
 ├── start.sh               # Linux/macOS 一键启动
 ├── main.py                # 启动入口（CLI 解析、横幅）
@@ -336,3 +339,10 @@ YAML 热加载、导入导出往返、聚合计数、清空日志 —— 共 12 
 
 多租户 / 团队账号 / 配额限流 / 计费金额 / 告警 / 故障降级重试 / 负载均衡 /
 embedding / list-models / 内容过滤。网关不修改原始消息，仅做路由与参数合并。
+
+## 开源协议
+
+本项目基于 [MIT License](LICENSE) 开源——可自由使用、修改、商用与二次分发，
+只需保留版权与许可声明。
+
+如果 LiteGate 对你有帮助，欢迎点一个 ⭐ Star 支持一下！
