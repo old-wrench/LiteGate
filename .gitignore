@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# 运行时生成（含真实密钥，切勿提交）
+config.yaml
+*.bak
+
+# 运行时数据
+usage.db
+usage.db-shm
+usage.db-wal
+*.db-journal
+
+# 前端构建清单（start.py 每次启动自动重新生成）
+app/static/.build-info.json
+
+# IDE / 系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

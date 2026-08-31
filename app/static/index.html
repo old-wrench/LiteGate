@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LiteGate · 极简LLM代理网关</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">⇄</span>
+    <div>
+      <h1>LiteGate</h1>
+      <p>极简LLM代理网关 · 多渠道路由 · 用量统计</p>
+    </div>
+  </div>
+  <nav class="tabs">
+    <button class="tab" data-tab="settings" type="button">系统设置</button>
+    <button class="tab active" data-tab="channels" type="button">上游渠道配置</button>
+    <button class="tab" data-tab="stats" type="button">Token 用量看板</button>
+  </nav>
+</header>
+
+<main>
+  <!-- ===================== 页面A：上游渠道配置 ===================== -->
+  <section id="page-channels" class="page active">
+
+    <div class="card settings-card">
+      <div class="card-head"><h2><span class="dot d-client"></span>对外虚拟 Key 分发<span id="key-count" class="pill">0</span></h2>
+        <span class="dim">发给不同同事 · 各自统计、可合并查看（看板「按使用者」）</span>
+      </div>
+      <div class="scroll-x">
+        <table class="tbl">
+          <thead><tr><th>名称</th><th>Key</th><th>状态</th><th class="ops">操作</th></tr></thead>
+          <tbody id="keys-body"></tbody>
+        </table>
+      </div>
+      <div class="row-end"><button id="btn-new-key" class="btn primary" type="button">＋ 新增Key</button></div>
+      <p class="hint block-hint">同事侧配置：OPENAI_BASE_URL=http://&lt;内网IP&gt;:9900/v1（局域网模式）或 http://127.0.0.1:9900/v1（本机），OPENAI_API_KEY=分发的Key。停用/删除后该Key立即失效，已有统计保留。</p>
+    </div>
+
+    <div class="card">
+      <div class="card-head">
+        <h2><span class="dot d-tag"></span>上游渠道 <span id="up-count" class="pill">0</span></h2>
+        <div class="toolbar">
+          <input type="file" id="import-file" accept=".yaml,.yml,.txt" hidden>
+          <button id="btn-new" class="btn primary" type="button">＋ 新增上游</button>
+          <a id="btn-export" class="btn" href="/admin/export">导出 YAML</a>
+          <button id="btn-import" class="btn" type="button">导入 YAML</button>
+          <button id="btn-refresh-upstreams" class="btn" type="button">刷新</button>
+        </div>
+      </div>
+      <div class="scroll-x">
+        <table class="tbl">
+          <thead><tr>
+            <th>别名 alias</th><th>真实模型</th><th>API 地址</th><th>API Key</th><th>标签 tag</th>
+            <th class="num">思考预算</th><th class="num">max_tokens</th><th class="num">max_ctx</th>
+            <th>强制覆盖</th><th>流式usage</th><th class="ops">操作</th>
+          </tr></thead>
+          <tbody id="upstreams-body"></tbody>
+        </table>
+        <div id="up-empty" class="empty" hidden>暂无上游配置 —— 点击「＋ 新增上游」添加第一个渠道；客户端把 model 填成别名即可调用。</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== 页面A2：系统设置 ===================== -->
+  <section id="page-settings" class="page">
+    <div class="card settings-card">
+      <div class="card-head"><h2><span class="dot d-alias"></span>服务监听</h2><span class="dim">变更需重启服务生效</span></div>
+      <label>listen_addr
+        <input id="set-listen" type="text" spellcheck="false" placeholder="127.0.0.1:8000">
+        <small class="hint">127.0.0.1=仅本机；0.0.0.0=所有网卡（局域网同事可调用 /v1，虚拟Key鉴权）；也可填某个内网 IP 只绑一块网卡</small>
+      </label>
+      <div class="row-end"><button id="btn-save-settings" class="btn primary" type="button">保存监听地址</button></div>
+    </div>
+
+    <div class="card settings-card">
+      <div class="card-head"><h2><span class="dot d-client"></span>管理面板访问</h2><span class="dim">保存后约 2 秒生效（热加载）；本机 127.0.0.1 永远允许</span></div>
+      <div class="fgrid">
+        <label>允许来源
+          <select id="set-access-mode">
+            <option value="local">仅本机（最安全）</option>
+            <option value="lan">本机 + 局域网（私有网段）</option>
+            <option value="allowlist">本机 + 自定义白名单</option>
+            <option value="any">不限制（不推荐）</option>
+          </select>
+        </label>
+        <label class="full">白名单（仅「自定义白名单」模式使用；每行一条：IP / 网段 CIDR / 通配符）
+          <textarea id="set-access-allow" rows="4" placeholder="192.168.0.23&#10;10.0.0.0/8&#10;192.168.0.*"></textarea>
+        </label>
+      </div>
+      <div class="row-end"><button id="btn-save-access" class="btn primary" type="button">保存访问控制</button></div>
+      <p class="hint">/v1 数据面不受此限制（始终由虚拟Key鉴权）。来源判断只认 IP，域名无法作为来源条件；如需域名接入请置于反向代理之后并放行代理所在网段。</p>
+    </div>
+  </section>
+
+  <!-- ===================== 页面B：Token 用量看板 ===================== -->
+  <section id="page-stats" class="page">
+    <div class="card filters-card">
+      <div class="filters-grid">
+        <label>开始时间<input id="fl-start" type="datetime-local"></label>
+        <label>结束时间<input id="fl-end" type="datetime-local"></label>
+        <label>使用者<select id="fl-client"></select></label>
+        <label>标签 tag<select id="fl-tag"></select></label>
+        <label>别名 alias<select id="fl-alias"></select></label>
+      </div>
+      <div class="filters-actions">
+        <div class="quick" id="quick-ranges">
+          <button data-r="today" class="btn sm" type="button">今天</button>
+          <button data-r="24h" class="btn sm" type="button">近24小时</button>
+          <button data-r="7d" class="btn sm" type="button">近7天</button>
+          <button data-r="30d" class="btn sm" type="button">近30天</button>
+          <button data-r="all" class="btn sm" type="button">全部</button>
+        </div>
+        <div class="grow"></div>
+        <button id="btn-query" class="btn primary" type="button">查询</button>
+        <button id="btn-reset-range" class="btn" type="button">重置筛选</button>
+        <span class="divider-v"></span>
+        <button id="btn-clear" class="btn danger" type="button">清空统计日志</button>
+      </div>
+    </div>
+
+    <div class="kpi-grid" id="kpi-grid"></div>
+    <p class="kpi-caption" id="kpi-caption"></p>
+
+    <div class="sum-grid">
+      <div class="card sum-card">
+        <div class="card-head"><h2><span class="dot d-client"></span>按 使用者</h2><span class="dim">分发Key归属</span></div>
+        <table class="tbl"><thead><tr><th>使用者</th><th class="num">请求</th><th class="num">工具</th><th class="num">输入</th><th class="num">输出</th><th class="num">缓存</th><th class="num">命中率</th><th class="num">合计</th></tr></thead><tbody id="sum-client"></tbody></table>
+      </div>
+      <div class="card sum-card">
+        <div class="card-head"><h2><span class="dot d-tag"></span>按 Tag</h2><span class="dim">CodingPlan 账号</span></div>
+        <table class="tbl"><thead><tr><th>tag</th><th class="num">请求</th><th class="num">工具</th><th class="num">输入</th><th class="num">输出</th><th class="num">缓存</th><th class="num">命中率</th><th class="num">合计</th></tr></thead><tbody id="sum-tag"></tbody></table>
+      </div>
+      <div class="card sum-card">
+        <div class="card-head"><h2><span class="dot d-alias"></span>按 别名</h2><span class="dim">alias</span></div>
+        <table class="tbl"><thead><tr><th>alias</th><th class="num">请求</th><th class="num">工具</th><th class="num">输入</th><th class="num">输出</th><th class="num">缓存</th><th class="num">命中率</th><th class="num">合计</th></tr></thead><tbody id="sum-alias"></tbody></table>
+      </div>
+      <div class="card sum-card">
+        <div class="card-head"><h2><span class="dot d-model"></span>按 真实模型</h2><span class="dim">real_model</span></div>
+        <table class="tbl"><thead><tr><th>real_model</th><th class="num">请求</th><th class="num">工具</th><th class="num">输入</th><th class="num">输出</th><th class="num">缓存</th><th class="num">命中率</th><th class="num">合计</th></tr></thead><tbody id="sum-model"></tbody></table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>请求明细 <span id="logs-total" class="pill">0</span></h2>
+        <span class="dim">每行 = 一次模型调用；「流式无usage」表示厂商未返回用量</span>
+      </div>
+      <div class="table-wrap">
+        <table class="tbl logs">
+          <thead><tr><th>时间</th><th>使用者</th><th>别名</th><th>模型</th><th>Tag</th><th class="num">输入</th><th class="num">输出</th><th class="num">缓存</th><th class="num">命中率</th><th class="num">工具</th><th>备注</th></tr></thead>
+          <tbody id="logs-body"></tbody>
+        </table>
+        <div id="logs-empty" class="empty" hidden>当前筛选条件下没有统计记录。</div>
+      </div>
+      <div class="pager">
+        <button id="pg-prev" class="btn sm" type="button">← 上一页</button>
+        <span id="pg-info" class="dim"></span>
+        <button id="pg-next" class="btn sm" type="button">下一页 →</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- ===================== 上游编辑弹窗 ===================== -->
+<div class="modal-mask" id="modal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="modal-title">新增上游渠道</h3>
+      <button class="icon-btn" id="modal-x" type="button" title="关闭">×</button>
+    </div>
+    <form id="up-form">
+      <input type="hidden" id="f-id">
+      <div class="fgrid">
+        <div class="form-sec">基础信息</div>
+        <label>别名 alias *
+          <input id="f-alias" required placeholder="claude-sonnet-plan-a">
+          <small class="hint">客户端 model 参数填这个名称，需唯一</small>
+        </label>
+        <label>真实模型 real_model *
+          <input id="f-real" required placeholder="claude-sonnet-4-5">
+        </label>
+        <label class="full">API 地址 api_base *
+          <input id="f-base" required placeholder="https://api.example.com/v1">
+          <small class="hint">填到 /v1 为止，网关自动拼接 /chat/completions（智谱 CodingPlan 填 https://open.bigmodel.cn/api/coding/paas/v4）</small>
+        </label>
+        <label class="full">API Key
+          <input id="f-key" type="password" autocomplete="off" placeholder="留空则不携带 Authorization 头">
+          <span class="check-row"><input type="checkbox" id="f-key-show"><em>显示明文</em></span>
+        </label>
+        <div class="form-sec">参数预设（留空 = 不干预）</div>
+        <label>标签 tag
+          <input id="f-tag" placeholder="plan-account-a">
+          <small class="hint">用于按 CodingPlan 账号区分用量统计</small>
+        </label>
+        <label>强制覆盖客户端参数
+          <span class="check-row standalone"><input type="checkbox" id="f-force"><em>force_override_client_params</em></span>
+          <small class="hint">开启后下方预设值无条件覆盖客户端传入的同名参数</small>
+        </label>
+        <label>思考预算 thinking_budget
+          <input id="f-budget" type="number" min="1" step="1" placeholder="留空不干预">
+        </label>
+        <label>最大输出 max_tokens
+          <input id="f-maxtok" type="number" min="1" step="1" placeholder="留空不干预">
+        </label>
+        <label>上下文上限 max_context_tokens
+          <input id="f-maxctx" type="number" min="1" step="1" placeholder="留空不干预">
+        </label>
+        <div class="form-sec">流式用量统计</div>
+        <label class="full">parse_stream_usage
+          <span class="check-row standalone"><input type="checkbox" id="f-psu"><em>注入 stream_options 并旁路提取 usage 与工具调用次数</em></span>
+          <small class="hint">需上游支持 OpenAI 风格 stream_options；不支持时 token 记 0。关闭则纯直通零解析</small>
+        </label>
+      </div>
+      <p class="hint block-hint">参数优先级：开启「强制覆盖」→ 网关预设胜出；关闭时 → 客户端传了就用客户端的，没传才注入预设值；预设为空 → 完全透传。</p>
+      <div class="modal-foot">
+        <button type="button" class="btn" id="modal-cancel">取消</button>
+        <button type="submit" class="btn primary">保存</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ===================== 虚拟Key编辑弹窗 ===================== -->
+<div class="modal-mask" id="key-modal">
+  <div class="modal">
+    <div class="modal-head">
+      <h3 id="key-modal-title">新增虚拟Key</h3>
+      <button class="icon-btn" id="kmodal-x" type="button" title="关闭">×</button>
+    </div>
+    <form id="key-form">
+      <input type="hidden" id="kf-id">
+      <div class="fgrid">
+        <div class="form-sec">Key 信息</div>
+        <label>名称 *（使用者标识）
+          <input id="kf-name" required placeholder="张三 / 同事A">
+        </label>
+        <label>状态
+          <span class="check-row standalone"><input type="checkbox" id="kf-enabled" checked><em>启用（停用后该Key立即401）</em></span>
+        </label>
+        <label class="full">Key 值 *
+          <div class="key-row">
+            <input id="kf-key" type="password" required autocomplete="off" placeholder="留空自动生成 sk-virtual-...">
+            <button id="kf-gen" class="btn sm" type="button">随机生成</button>
+          </div>
+          <span class="check-row"><input type="checkbox" id="kf-show"><em>显示明文（复制发给同事）</em></span>
+        </label>
+      </div>
+      <div class="modal-foot">
+        <button type="button" class="btn" id="kmodal-cancel">取消</button>
+        <button type="submit" class="btn primary">保存</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="toasts"></div>
+<script src="/static/app.js" defer></script>
+</body>
+</html>
