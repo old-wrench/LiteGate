@@ -37,11 +37,11 @@
 
 ## 界面预览
 
-| 渠道与虚拟 Key 管理 | Token 用量看板 |
+| 上游渠道配置 | Token 用量看板（含成本估算） |
 | --- | --- |
-| ![渠道及APIkey管理](docs/ui-channels-keys.png) | ![Token 用量看板](docs/ui-usage-dashboard.png) |
-
-![系统设置](docs/ui-settings.png)
+| ![上游渠道配置](docs/ui-upstreams.png) | ![用量看板](docs/ui-dashboard.png) |
+| **用量明细** | **系统设置（含用量保留天数）** |
+| ![用量明细](docs/ui-usage-logs.png) | ![系统设置](docs/ui-settings.png) |
 
 ## 特性一览
 
@@ -56,7 +56,7 @@
 - 错误：上游 4xx/5xx 报文原样透传，不做包装、不做重试降级
 - 存储：渠道配置 → 本地 YAML（热加载）；用量统计 → 单文件 SQLite，
   支持按保留天数自动清理过期记录（默认不清理）
-- Web 面板：渠道增删改查 + YAML 导入导出；看板支持筛选、三维聚合、清空日志
+- Web 面板：渠道增删改查 + YAML 导入导出；看板支持筛选、三维聚合、成本估算、清空日志与按保留天数自动清理
 
 ## 快速开始
 
