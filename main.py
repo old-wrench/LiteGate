@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import socket
 import sys
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -40,6 +41,23 @@ def mask(key: str) -> str:
     return key[:12] + "..." if len(key) > 16 else key
 
 
+def lan_ips() -> list:
+    """探测本机内网 IPv4（UDP connect 技巧，只取路由源地址，不实际发包）。"""
+    ips = []
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("10.255.255.255", 1))
+            ip = s.getsockname()[0]
+            if ip and not ip.startswith("127.") and ip not in ips:
+                ips.append(ip)
+        finally:
+            s.close()
+    except OSError:
+        pass
+    return ips
+
+
 def main() -> int:
     args = build_parser().parse_args()
 
@@ -65,7 +83,9 @@ def main() -> int:
 
     snap = app.state.store.snapshot()
     enabled_keys = [k for k in snap.get("api_keys", []) if k.get("enabled")]
-    panel = "http://" + host + ":" + str(port) + "/"
+    # 0.0.0.0/:: 只是监听通配地址，不是浏览器可访问的地址；横幅展示用回环地址
+    panel_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+    panel = "http://" + panel_host + ":" + str(port) + "/"
     print("=" * 58)
     print("  LiteGate · 极简LLM代理网关")
     print("  面板地址 : " + panel)
@@ -85,7 +105,9 @@ def main() -> int:
     if host in ("127.0.0.1", "::1"):
         print("  * 仅监听本机回环地址，不对局域网开放。Ctrl+C 退出。")
     else:
-        print("  * 局域网模式：/v1 已对局域网开放（虚拟Key鉴权），管理面板仍仅限本机访问。Ctrl+C 退出。")
+        ips = " 或 ".join(lan_ips()) or "<本机内网IP>"
+        print("  * 局域网模式：/v1 已对局域网开放（虚拟Key鉴权）；管理面板访问策略见上方「面板访问」。")
+        print("    局域网同事侧配置：OPENAI_BASE_URL=http://" + ips + ":" + str(port) + "/v1")
     print("=" * 58, flush=True)
 
     import uvicorn

@@ -21,8 +21,9 @@ from typing import Any, Callable, Optional
 import yaml
 
 DEFAULT_LISTEN_ADDR = "127.0.0.1:8000"
-#: 支持在网关侧预设的请求体参数（会合并进转发给上游的 JSON body）
-PARAM_KEYS = ("thinking_budget", "max_tokens", "max_context_tokens")
+#: 支持在网关侧预设的请求体参数（会合并进转发给上游的 JSON body）。
+#: 网关转发逻辑（app/gateway.py）直接引用这份定义，保持单一来源，避免两处不一致。
+PARAM_KEYS = ("max_tokens", "max_context_tokens")
 #: 管理面板访问来源模式（admin_access.mode）：
 #:   local=仅本机 | lan=本机+私有网段(默认) | allowlist=本机+白名单 | any=不限制
 ADMIN_ACCESS_MODES = ("local", "lan", "allowlist", "any")
@@ -116,6 +117,11 @@ def _opt_float(value: Any, field: str) -> Optional[float]:
     if f < 0:
         raise ConfigError(f"{field} 不能为负数")
     return f
+
+
+def normalize_retention_days(value: Any) -> Optional[int]:
+    """统计日志保留天数：正整数 或 None（留空 = 不自动清理，默认）。"""
+    return _opt_int(value, "retention_days")
 
 
 def normalize_upstream(item: Any) -> dict:
@@ -217,6 +223,7 @@ def normalize_doc(raw: Any) -> dict:
     doc = {
         "listen_addr": listen_addr,
         "admin_access": normalize_admin_access(raw.get("admin_access")),
+        "retention_days": normalize_retention_days(raw.get("retention_days")),
         "api_keys": normalize_keys(raw_keys),
         "upstreams": [],
     }

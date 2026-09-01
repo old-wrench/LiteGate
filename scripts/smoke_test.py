@@ -7,7 +7,8 @@
 2. 以子进程启动真正的网关服务（独立的临时配置/数据库/端口）；
 3. 验证：多虚拟Key鉴权与停用、未知别名400、别名路由+model替换、参数优先级、
    错误原样透传且不脏统计、SSE直通记0、流式旁路采集 usage/cached/tool_calls、
-   外部改 YAML 热加载、导入导出往返、聚合(含请求数/按使用者分组)、清空日志。
+   外部改 YAML 热加载、导入导出往返、聚合(含请求数/按使用者分组)、清空日志、
+   retention_days 自动清理。
 
 运行：python scripts/smoke_test.py
 """
@@ -403,6 +404,32 @@ def main() -> int:
         expect(cl["cleared"] == acc["rows"], "清空数量应为 " + str(acc["rows"]))
         expect(fetch_logs(client)["total"] == 0, "清空后应为0行")
         ok("Keys CRUD（自动生成/重名409/删除） + 清空日志生效")
+
+        # ---- 14. 统计日志保留天数（自动清理） ------------------------------
+        # 直接往测试库插一条 3 天前的旧记录，再开启 retention_days=1，
+        # 保存设置时应立即把这条过期记录清掉；随后关闭清理并校验非法值被拒。
+        import sqlite3 as _sq
+        cx = _sq.connect(db_path)
+        with cx:
+            cx.execute(
+                "INSERT INTO logs(create_time, alias, real_model, upstream_tag,"
+                " client_name, prompt_tokens, completion_tokens, cached_tokens,"
+                " tool_calls, is_stream, cost) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (time.time() - 3 * 86400, "old-alias", "old-model", "", "",
+                 1, 1, 0, 0, 0, None),
+            )
+        cx.close()
+        bad = client.put("/admin/settings", json={"retention_days": 0})
+        expect(bad.status_code == 400, "retention_days=0 应400，实际 "
+               + str(bad.status_code))
+        sv = client.put("/admin/settings", json={"retention_days": 1}).json()
+        expect(sv["retention_days"] == 1, "保留天数应保存为1")
+        expect(sv.get("purged") == 1, "保存时应立即清理1条过期记录，实际 "
+               + str(sv.get("purged")))
+        expect(fetch_logs(client)["total"] == 0, "过期记录清理后应为0行")
+        off = client.put("/admin/settings", json={"retention_days": None}).json()
+        expect(off["retention_days"] is None, "应可关闭自动清理")
+        ok("数据保留：retention_days 校验/保存/立即清理过期记录/关闭")
 
         client.close()
         print("\n[smoke] 全部用例通过 ✔ （入库并清空 %d 行）" % acc["rows"])

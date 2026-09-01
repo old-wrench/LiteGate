@@ -21,15 +21,19 @@ from __future__ import annotations
 import hmac
 import json
 import time
+from typing import Optional
 
 import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
+from .config import PARAM_KEYS
+
 
 class Gateway:
     #: 可在网关侧预设/覆盖的请求体参数
-    PARAM_KEYS = ("max_tokens", "max_context_tokens")
+    #: （单一来源：直接引用 app/config.py 的 PARAM_KEYS，防止两处定义漂移）
+    PARAM_KEYS = PARAM_KEYS
 
     def __init__(self, store, db):
         self.store = store
@@ -259,11 +263,13 @@ def create_gateway_router(gateway: Gateway) -> APIRouter:
         try:
             resp = await gateway.client.send(req, stream=want_stream)
         except httpx.HTTPError as exc:
-            # 上游连不上/超时：不做重试降级（明确排除项），仅返回 502
+            # 上游连不上/超时：不做重试降级（明确排除项），仅返回 502；
+            # 附带异常摘要便于区分 DNS 失败 / 超时 / 证书错误等（截断防刷屏）
             return JSONResponse(
                 {
                     "error": {
-                        "message": "上游连接失败（未重试）：" + exc.__class__.__name__,
+                        "message": "上游连接失败（未重试）："
+                        + exc.__class__.__name__ + ": " + str(exc)[:200],
                         "type": "upstream_error",
                     }
                 },

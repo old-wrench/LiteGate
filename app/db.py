@@ -238,6 +238,16 @@ class StatsDB:
             self._conn.commit()
         return int(n or 0)
 
+    def purge_before(self, cut_ts: float) -> int:
+        """删除 create_time 早于 cut_ts 的记录（保留天数自动清理），返回删除行数。"""
+        with self._lock:
+            cur = self._conn.execute(
+                "DELETE FROM logs WHERE create_time < ?", (float(cut_ts),)
+            )
+            n = cur.rowcount
+            self._conn.commit()
+        return int(n or 0)
+
     def close(self) -> None:
         try:
             self._conn.close()

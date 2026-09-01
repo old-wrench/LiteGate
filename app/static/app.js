@@ -134,6 +134,7 @@ function copyText(text) {
 async function loadListen() {
   var c = await api("/admin/config");
   $("#set-listen").value = c.listen_addr || "";
+  $("#set-retention").value = c.retention_days == null ? "" : c.retention_days;
   var acc = c.admin_access || {};
   $("#set-access-mode").value = acc.mode || "lan";
   $("#set-access-allow").value = (acc.allow || []).join("\n");
@@ -306,6 +307,26 @@ $("#btn-save-settings").addEventListener("click", async function () {
 
 $("#set-access-mode").addEventListener("change", function () {
   $("#set-access-allow").disabled = this.value !== "allowlist";
+});
+
+$("#btn-save-retention").addEventListener("click", async function () {
+  try {
+    var raw = $("#set-retention").value.trim();
+    var days = null;
+    if (raw) {
+      days = parseInt(raw, 10);
+      if (!days || days <= 0) { toast("保留天数需为正整数，留空表示不清理", true); return; }
+    }
+    var r = await api("/admin/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ retention_days: days })
+    });
+    $("#set-retention").value = r.retention_days == null ? "" : r.retention_days;
+    toast(days ? ("已保存：保留 " + days + " 天"
+      + (r.purged != null ? "，本次已清理 " + r.purged + " 条过期记录" : "，暂无过期记录"))
+      : "已关闭自动清理，历史记录将永久保留");
+  } catch (e) { toast(e.message, true); }
 });
 
 $("#btn-save-access").addEventListener("click", async function () {
@@ -614,6 +635,13 @@ function drawSumTable(sel, rows, barCls) {
     tb.appendChild(tr0);
     return;
   }
+  /* 数值列：≥1万 用「万/亿」缩写防撑破卡片，悬停 title 显示精确值 */
+  function sumNum(v, cls) {
+    var n = Number(v || 0);
+    var td = el("td", cls, fmtCompact(n));
+    if (Math.abs(n) >= 1e4) td.title = "精确值 " + fmtN(n);
+    return td;
+  }
   var max = 0;
   rows.forEach(function (r) { if (Number(r.total) > max) max = Number(r.total); });
   rows.forEach(function (r) {
@@ -632,15 +660,17 @@ function drawSumTable(sel, rows, barCls) {
     wrap.appendChild(bar);
     tdKey.appendChild(wrap);
     tr.appendChild(tdKey);
-    tr.appendChild(el("td", "num", fmtN(r.requests)));
-    tr.appendChild(el("td", "num c-tools" + (Number(r.tools) ? "" : " dim0"), fmtN(r.tools)));
-    tr.appendChild(el("td", "num c-in" + (Number(r.prompt) ? "" : " dim0"), fmtN(r.prompt)));
-    tr.appendChild(el("td", "num c-out" + (Number(r.completion) ? "" : " dim0"), fmtN(r.completion)));
-    tr.appendChild(el("td", "num c-cache" + (Number(r.cached || 0) ? "" : " dim0"), fmtN(r.cached || 0)));
+    tr.appendChild(sumNum(r.requests, "num"));
+    tr.appendChild(sumNum(r.tools, "num c-tools" + (Number(r.tools) ? "" : " dim0")));
+    tr.appendChild(sumNum(r.prompt, "num c-in" + (Number(r.prompt) ? "" : " dim0")));
+    tr.appendChild(sumNum(r.completion, "num c-out" + (Number(r.completion) ? "" : " dim0")));
+    tr.appendChild(sumNum(r.cached || 0, "num c-cache" + (Number(r.cached || 0) ? "" : " dim0")));
     tr.appendChild(el("td", "num " + rateClass(r.cached, r.prompt), hitRate(r.cached, r.prompt)));
-    tr.appendChild(el("td", "num c-total", fmtN(r.total)));
-    tr.appendChild(el("td", "num c-cost" + (r.cost != null ? "" : " dim0"),
-      fmtCost(r.cost)));
+    tr.appendChild(sumNum(r.total, "num c-total"));
+    var tdc = el("td", "num c-cost" + (r.cost != null ? "" : " dim0"),
+      fmtCost(r.cost));
+    if (r.cost != null) tdc.title = "精确值 ¥" + Number(r.cost);
+    tr.appendChild(tdc);
     tb.appendChild(tr);
   });
 }
@@ -660,6 +690,7 @@ function renderSummary(s) {
   grid.innerHTML = "";
   kpis.forEach(function (p) {
     var c = el("div", "kpi " + p[0]);
+    c.title = p[1] + "：" + (p[2] == null ? "—" : p[2]) + " · " + p[3];
     c.appendChild(el("div", "kpi-label", p[1]));
     c.appendChild(el("div", "kpi-value", p[2]));
     c.appendChild(el("div", "kpi-sub", p[3]));

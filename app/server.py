@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 import ipaddress
+import threading
+import time
 
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -28,6 +31,7 @@ def create_app(config_path: str, db_path: str) -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         yield
+        _retention_stop.set()
         await gateway.aclose()
         database.close()
         store.close()
@@ -58,6 +62,28 @@ def create_app(config_path: str, db_path: str) -> FastAPI:
 
     app.include_router(create_gateway_router(gateway))
     app.include_router(admin.api)
+
+    # ---- 用量日志自动清理（retention_days，默认 None = 不清理）------------
+    # 启动时检查一次，之后每小时检查；面板「保存保留天数」时也会立即清理一次。
+    _retention_stop = threading.Event()
+
+    def _retention_loop() -> None:
+        while True:
+            try:
+                days = store.snapshot().get("retention_days")
+                if days:
+                    n = database.purge_before(time.time() - days * 86400)
+                    if n:
+                        print("[db] 已自动清理 " + str(n) + " 条超过 "
+                              + str(days) + " 天的用量记录", flush=True)
+            except Exception as exc:
+                print("[db] 用量日志自动清理失败：" + str(exc), flush=True)
+            if _retention_stop.wait(3600.0):
+                break
+
+    threading.Thread(
+        target=_retention_loop, name="usage-retention", daemon=True
+    ).start()
 
     # 管理面访问来源控制（admin_access，随配置热加载，约2秒生效）：
     #   local     仅本机回环
@@ -116,6 +142,23 @@ def create_app(config_path: str, db_path: str) -> FastAPI:
     async def admin_access_guard(request: Request, call_next):
         path = request.url.path
         if path == "/" or path.startswith(("/admin", "/static")):
+            # ---- 跨站写请求防护（CSRF）----
+            # 管理面没有登录鉴权（本地自用设计），而浏览器发起的跨站 POST/PUT/DELETE
+            # 一定携带 Origin/Referer 且其 host 与本站 Host 不同 —— 据此拦截，
+            # 防止局域网里其他机器浏览器中打开的恶意网页静默调用 /admin 写接口改配置。
+            # 命令行工具（curl 等）不携带这些头，不受影响；面板同源请求 host 一致，放行。
+            if (path.startswith("/admin")
+                    and request.method in ("POST", "PUT", "DELETE", "PATCH")):
+                src = (request.headers.get("origin")
+                       or request.headers.get("referer") or "")
+                if src:
+                    src_host = urlsplit(src).netloc.lower()
+                    site_host = (request.headers.get("host") or "").lower()
+                    if src_host and site_host and src_host != site_host:
+                        return JSONResponse(
+                            {"detail": "已拦截跨站写请求（Origin/Referer 与本站不一致）"},
+                            status_code=403,
+                        )
             client = (request.client.host if request.client else "") or ""
             access = app.state.store.snapshot().get("admin_access") or {}
             if not _host_allowed(client, access):

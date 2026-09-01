@@ -94,6 +94,15 @@
       <div class="row-end"><button id="btn-save-access" class="btn primary" type="button">保存访问控制</button></div>
       <p class="hint">/v1 数据面不受此限制（始终由虚拟Key鉴权）。来源判断只认 IP，域名无法作为来源条件；如需域名接入请置于反向代理之后并放行代理所在网段。</p>
     </div>
+
+    <div class="card settings-card">
+      <div class="card-head"><h2><span class="dot d-tag"></span>用量数据保留</h2><span class="dim">默认不清理 · 保存时立即清理一次，之后后台每小时检查</span></div>
+      <label>统计日志保留天数
+        <input id="set-retention" type="number" min="1" step="1" placeholder="留空 = 永久保留（不自动清理）">
+        <small class="hint">设置后自动删除超过 N 天的统计记录；不影响「清空统计日志」按钮</small>
+      </label>
+      <div class="row-end"><button id="btn-save-retention" class="btn primary" type="button">保存保留天数</button></div>
+    </div>
   </section>
 
   <!-- ===================== 页面B：Token 用量看板 ===================== -->
@@ -206,6 +215,7 @@
           <input id="f-maxctx" type="number" min="1" step="1" placeholder="留空不干预">
         </label>
         <div class="form-sec">价格（元 / 百万 Tokens，选填）</div>
+        <small class="hint full">成本口径：输入/输出哪项价格留空，该项按 0 元计入（如只填输出价 → 成本=纯输出费用），建议输入、输出都填；缓存价留空按输入价折算。成本按请求时点的单价入库，之后改价不影响历史记录。</small>
         <label>输入价格
           <input id="f-price-in" type="number" min="0" step="0.0001" placeholder="留空不计成本">
         </label>

@@ -12,16 +12,19 @@ from __future__ import annotations
 import os
 import secrets
 import shutil
+import time
 
 import yaml
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import Response
+from starlette.concurrency import run_in_threadpool
 
 from .config import (
     ConfigError,
     normalize_admin_access,
     normalize_doc,
     normalize_keys,
+    normalize_retention_days,
     normalize_upstream,
     parse_listen,
 )
@@ -69,6 +72,7 @@ def get_config(request: Request):
     return {
         "listen_addr": snap["listen_addr"],
         "admin_access": snap.get("admin_access") or {"mode": "lan", "allow": []},
+        "retention_days": snap.get("retention_days"),
         "primary_key": keys[0]["key"] if keys else "",
         "api_keys": snap["api_keys"],
         "upstreams": snap["upstreams"],
@@ -91,14 +95,28 @@ async def put_settings(request: Request):
             patch["admin_access"] = normalize_admin_access(body.get("admin_access"))
         except ConfigError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
+    if "retention_days" in body:
+        try:
+            patch["retention_days"] = normalize_retention_days(
+                body.get("retention_days")
+            )
+        except ConfigError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
     if not patch:
         raise HTTPException(status_code=400, detail="没有可更新的设置项")
 
     fresh = _store(request).update(lambda d: {**d, **patch})
+    # 设置了保留天数时立即清理一次过期记录（之后由后台线程每小时检查）
+    purged = None
+    if patch.get("retention_days"):
+        cut = time.time() - patch["retention_days"] * 86400
+        purged = await run_in_threadpool(_db(request).purge_before, cut)
     return {
         "listen_addr": fresh["listen_addr"],
         "admin_access": fresh["admin_access"],
+        "retention_days": fresh.get("retention_days"),
         "listen_requires_restart": True,
+        "purged": purged,
     }
 
 
