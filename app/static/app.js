@@ -442,16 +442,16 @@ $("#btn-refresh-upstreams").addEventListener("click", refreshUpstreams);
 /* ---------- 上游弹窗 ---------- */
 function openModal(item, isCopy) {
   var isNew = !item;
-  var blank = isNew || !!isCopy;   /* 新增/复制：id清空按新增保存，别名必改 */
+  var blank = isNew || !!isCopy;   /* 新增/复制：id清空按新增保存，别名和真实模型必改 */
   $("#modal-title").textContent = isNew ? "新增上游渠道"
-      : (isCopy ? "复制上游渠道：" + item.alias + "（请修改别名）"
+      : (isCopy ? "复制上游渠道：" + item.alias + "（请修改别名和真实模型）"
                 : "编辑上游渠道：" + item.alias);
   $("#f-id").value = blank ? "" : item.id;
   $("#f-alias").value = blank ? "" : item.alias;
   $("#f-real").value = blank ? "" : item.real_model;
-  $("#f-base").value = blank ? "" : item.api_base;
-  $("#f-key").value = blank ? "" : (item.api_key || "");
-  $("#f-tag").value = blank ? "" : (item.tag || "");
+  $("#f-base").value = isNew ? "" : item.api_base;
+  $("#f-key").value = isNew ? "" : (item.api_key || "");
+  $("#f-tag").value = isNew ? "" : (item.tag || "");
   $("#f-maxtok").value = isNew || item.max_tokens == null ? "" : item.max_tokens;
   $("#f-maxctx").value = isNew || item.max_context_tokens == null ? "" : item.max_context_tokens;
   $("#f-price-in").value = isNew || item.price_input == null ? "" : item.price_input;
