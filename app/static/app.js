@@ -614,6 +614,34 @@ function fmtCost(v) {
   if (n < 100) return "\u00a5" + n.toFixed(3);
   return "\u00a5" + n.toFixed(2);
 }
+/* 延迟：1000ms 以下显示 ms，以上显示秒 */
+function fmtMs(v) {
+  if (v == null || isNaN(Number(v))) return "\u2014";
+  var n = Number(v);
+  if (n >= 1000) return (n / 1000).toFixed(n >= 10000 ? 1 : 2) + "s";
+  return Math.round(n) + "ms";
+}
+/* 输出速度：tok/s，常规保留1位小数 */
+function fmtTps(v) {
+  if (v == null || isNaN(Number(v))) return "\u2014";
+  var n = Number(v);
+  if (n >= 100) return Math.round(n) + " tok/s";
+  return n.toFixed(1) + " tok/s";
+}
+/* 单条请求性能：流式=首Token延迟 + 扣除TTFT后的生成速度；
+   非流式没有首Token边界，速度用总耗时估算。 */
+function perfText(r) {
+  var parts = [];
+  if (r.first_token_ms != null) parts.push("首token " + fmtMs(r.first_token_ms));
+  var totalMs = Number(r.duration_ms);
+  var ct = Number(r.completion_tokens || 0);
+  if (Number.isFinite(totalMs) && totalMs > 0 && ct > 0) {
+    var genMs = totalMs;
+    if (r.first_token_ms != null) genMs -= Number(r.first_token_ms);
+    if (genMs > 0) parts.push(fmtTps(ct / (genMs / 1000)));
+  }
+  return parts.length ? parts.join(" · ") : "\u2014";
+}
 /* 命中率配色：>=30% 绿 · >0 琥珀 · 无命中/无输入 灰 */
 function rateClass(cached, prompt) {
   prompt = Number(prompt);
@@ -684,7 +712,9 @@ function renderSummary(s) {
     ["k4", "\u8f93\u51fa Tokens", fmtCompact(g.completion), "\u5b8c\u6574\u503c " + fmtN(g.completion)],
     ["k5", "\u7f13\u5b58\u547d\u4e2d", fmtCompact(g.cached || 0), "\u547d\u4e2d\u7387 " + hitRate(g.cached, g.prompt)],
     ["k6", "\u5408\u8ba1 Tokens", fmtCompact(g.total), "\u8f93\u5165 + \u8f93\u51fa"],
-    ["k7", "\u4f30\u7b97\u6210\u672c", fmtCost(g.cost), "\u6309\u6e20\u9053\u5355\u4ef7\u6298\u7b97 \u00b7 \u672a\u7ef4\u62a4\u4ef7\u683c\u7684\u6e20\u9053\u4e0d\u8ba1\u5165"]
+    ["k7", "\u4f30\u7b97\u6210\u672c", fmtCost(g.cost), "\u6309\u6e20\u9053\u5355\u4ef7\u6298\u7b97 \u00b7 \u672a\u7ef4\u62a4\u4ef7\u683c\u7684\u6e20\u9053\u4e0d\u8ba1\u5165"],
+    ["k8", "\u9996Token\u5ef6\u8fdf", fmtMs(g.ttft), "\u6d41\u5f0f\u8bf7\u6c42\u5e73\u5747 TTFT"],
+    ["k9", "\u8f93\u51fa\u901f\u5ea6", fmtTps(g.tps), "\u6309\u751f\u6210\u65f6\u957f\u52a0\u6743\u7684 tok/s"]
   ];
   var grid = $("#kpi-grid");
   grid.innerHTML = "";
@@ -740,6 +770,11 @@ function renderLogs(data) {
       fmtN(r.tool_calls)));
     tr.appendChild(el("td", "num" + (r.cost != null ? " c-cost" : " dim0"),
       fmtCost(r.cost)));
+
+    var perf = perfText(r);
+    var tdPerf = el("td", "num nowrap" + (perf === "\u2014" ? " dim0" : " c-perf"), perf);
+    tdPerf.title = "流式：首Token延迟 + 扣除TTFT后的生成速度；非流式：按总耗时估算速度";
+    tr.appendChild(tdPerf);
 
     var tdNote = document.createElement("td");
     if (Number(r.is_stream) === 1 &&

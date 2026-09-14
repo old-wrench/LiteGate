@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS logs (
     cached_tokens     INTEGER NOT NULL DEFAULT 0,   -- 输入中命中上游缓存的token(<=prompt)
     tool_calls        INTEGER NOT NULL DEFAULT 0,   -- 本次响应工具调用次数
     is_stream         INTEGER NOT NULL DEFAULT 0,   -- 1=流式请求
+    first_token_ms    INTEGER,                      -- 首Token延迟(TTFT,毫秒)；非流式/旧数据为NULL
+    duration_ms       INTEGER,                      -- 请求进入网关到响应读完的总耗时(毫秒)
     cost              REAL                          -- 估算成本(元)，未维护价格为NULL
 );
 """
@@ -81,6 +83,10 @@ class StatsDB:
                 "ALTER TABLE logs ADD COLUMN tool_calls INTEGER NOT NULL DEFAULT 0")
         if "cost" not in cols:
             self._conn.execute("ALTER TABLE logs ADD COLUMN cost REAL")
+        if "first_token_ms" not in cols:
+            self._conn.execute("ALTER TABLE logs ADD COLUMN first_token_ms INTEGER")
+        if "duration_ms" not in cols:
+            self._conn.execute("ALTER TABLE logs ADD COLUMN duration_ms INTEGER")
 
     # ------------------------------------------------------------------
     def insert(
@@ -96,13 +102,16 @@ class StatsDB:
         cached_tokens: int = 0,
         tool_calls: int = 0,
         is_stream: bool = False,
+        first_token_ms: Optional[int] = None,
+        duration_ms: Optional[int] = None,
         cost: Optional[float] = None,
     ) -> None:
         with self._lock:
             self._conn.execute(
                 "INSERT INTO logs(create_time, alias, real_model, upstream_tag,"
                 " client_name, prompt_tokens, completion_tokens, cached_tokens,"
-                " tool_calls, is_stream, cost) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                " tool_calls, is_stream, first_token_ms, duration_ms, cost)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     float(create_time),
                     str(alias),
@@ -114,6 +123,8 @@ class StatsDB:
                     int(cached_tokens or 0),
                     int(tool_calls or 0),
                     1 if is_stream else 0,
+                    None if first_token_ms is None else int(first_token_ms),
+                    None if duration_ms is None else int(duration_ms),
                     None if cost is None else float(cost),
                 ),
             )
@@ -180,11 +191,13 @@ class StatsDB:
         """按 使用者/Tag/别名/真实模型 四个维度聚合，另给总计。
 
         每组同时给出：请求数(requests)、工具调用次数(tools)、
-        输入(prompt)、输出(completion)、缓存(cached)、合计(total)。
+        输入(prompt)、输出(completion)、缓存(cached)、合计(total)；
+        ttft 为平均首Token延迟(ms)，tps 为按生成时长加权的输出速度(tok/s)。
         """
         clause, args = self._where(start, end, tag, alias, client)
         out = {k: [] for k in ("by_client", "by_tag", "by_alias", "by_real_model")}
         out["grand"] = {}
+        # 速度 = SUM(输出token) / SUM(生成时长)。流式扣除TTFT；非流式没有TTFT，用总耗时估算。
         base_cols = (
             " COUNT(*)                              AS req,"
             " COALESCE(SUM(tool_calls),0)           AS tc,"
@@ -192,6 +205,12 @@ class StatsDB:
             " COALESCE(SUM(completion_tokens),0)    AS ct,"
             " COALESCE(SUM(cached_tokens),0)        AS cc,"
             " COALESCE(SUM(prompt_tokens + completion_tokens),0) AS tt,"
+            " AVG(first_token_ms)                   AS ttft,"
+            " SUM(CASE WHEN duration_ms IS NULL OR completion_tokens <= 0 THEN 0"
+            "     ELSE completion_tokens END) * 1000.0 /"
+            " NULLIF(SUM(CASE WHEN duration_ms IS NULL OR completion_tokens <= 0 THEN 0"
+            "     ELSE MAX(COALESCE(duration_ms,0) - COALESCE(first_token_ms,0),0) END),0)"
+            "                                      AS tps,"
             " SUM(cost)                             AS cost"  # 全为NULL时保持NULL
         )
         with self._lock:
@@ -204,7 +223,8 @@ class StatsDB:
                 out["by_" + key] = [
                     {"key": r["k"], "requests": r["req"], "tools": r["tc"],
                      "prompt": r["pt"], "completion": r["ct"], "cached": r["cc"],
-                     "total": r["tt"], "cost": r["cost"]}
+                     "total": r["tt"], "ttft": r["ttft"], "tps": r["tps"],
+                     "cost": r["cost"]}
                     for r in rows
                 ]
             g = self._conn.execute(
@@ -214,7 +234,7 @@ class StatsDB:
         out["grand"] = {
             "requests": g[0], "tools": g[1], "prompt": g[2],
             "completion": g[3], "cached": g[4], "total": g[5],
-            "cost": g[6],
+            "ttft": g[6], "tps": g[7], "cost": g[8],
         }
         return out
 

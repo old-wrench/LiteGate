@@ -48,7 +48,8 @@
 - OpenAI 兼容接口：`POST /v1/chat/completions` + `GET /v1/models`（实时返回已配置的模型列表；明确排除 embedding 等其他接口）
 - 鉴权：多把`api_keys`分发（每把有名称与启停开关），Bearer 校验不匹配返回 401；
   每次调用统计归属到对应使用者（同事），看板支持「按使用者」分别或合并查看
-- 用量计数：请求数与工具调用次数(tool_calls)一并入表聚合
+- 用量计数：请求数与工具调用次数(tool_calls)一并入表聚合；
+  看板支持首Token延迟（TTFT）与输出速度（tok/s）
 - 模型别名路由：同一真实模型可配多条记录（不同 alias / key / tag），多账号用量隔离
 - 参数合并：每条渠道可预设 `max_tokens` / `max_context_tokens`，
   支持「强制覆盖客户端参数」开关
@@ -168,6 +169,16 @@ Web 面板改动会原子写回此文件并即时生效；用编辑器手工修�
   能拿到 输入/输出/缓存 三项真实值（厂商不支持该参数则仍记 0、标记「流式无usage」）。
 - 仅成功响应入库；上游 4xx/5xx 原样透传给客户端，**不写库**，不污染统计。
 
+### 首Token延迟与输出速度口径
+
+- `first_token_ms`：从请求进入网关，到上游返回第一块流式响应字节的耗时；
+  仅流式请求记录，非流式没有首Token边界，记 NULL；
+- `duration_ms`：从请求进入网关，到本次响应读完的总耗时；
+- 流式速度：`completion_tokens / ((duration_ms - first_token_ms) / 1000)`；
+- 非流式速度：`completion_tokens / (duration_ms / 1000)`（按总耗时估算）；
+- 看板汇总的速度不是每行速度的算术平均，而是按生成时长加权的
+  `SUM(输出tokens) / SUM(生成时长)`，长请求对总速度影响更合理。
+
 ### 成本估算口径
 
 - 按渠道单价（元 / 百万 Tokens）折算：缓存命中的输入按缓存价计，其余输入按输入价计；
@@ -192,6 +203,8 @@ Web 面板改动会原子写回此文件并即时生效；用编辑器手工修�
 | completion_tokens | INTEGER | 输出 tokens（流式恒为 0） |
 | cached_tokens | INTEGER | 输入中命中上游缓存的 tokens（≤ prompt_tokens；取自 usage.prompt_tokens_details.cached_tokens，兼容 DeepSeek 的 prompt_cache_hit_tokens；未开启采集或厂商不支持时为 0） |
 | is_stream | INTEGER | 1=流式请求（UI 标注“流式无usage”） |
+| first_token_ms | INTEGER | 首Token延迟（TTFT，毫秒；仅流式记录，旧数据/非流式为 NULL） |
+| duration_ms | INTEGER | 请求进入网关到响应读完的总耗时（毫秒） |
 
 ### SQL 聚合查询示例
 

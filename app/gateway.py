@@ -55,6 +55,11 @@ def _err(status: int, message: str) -> JSONResponse:
     )
 
 
+def _elapsed_ms(t0: float) -> int:
+    """从请求起点开始计时，返回毫秒（monotonic 时钟，不受系统改时影响）。"""
+    return max(0, int(round((time.monotonic() - t0) * 1000)))
+
+
 def _extract_usage(usage: dict):
     """从 OpenAI 风格 usage 取 (输入, 输出, 缓存命中)。
 
@@ -186,6 +191,7 @@ def create_gateway_router(gateway: Gateway) -> APIRouter:
 
     @router.post("/v1/chat/completions")
     async def chat_completions(request: Request):
+        t0 = time.monotonic()
         cfg = gateway.store.snapshot()
 
         # ---- 1. 多虚拟Key鉴权：命中哪把就归属哪个使用者 ---------------
@@ -288,6 +294,8 @@ def create_gateway_router(gateway: Gateway) -> APIRouter:
             "cached_tokens": 0,
             "tool_calls": 0,
             "is_stream": 1 if want_stream else 0,
+            "first_token_ms": None,
+            "duration_ms": None,
             "cost": None,
         }
 
@@ -295,6 +303,7 @@ def create_gateway_router(gateway: Gateway) -> APIRouter:
             """入库失败只记日志，绝不影响正在进行的响应。"""
             try:
                 # 成本按请求发生时刻的渠道单价折算，入库后不随改价波动
+                rec["duration_ms"] = _elapsed_ms(t0)
                 rec["cost"] = _estimate_cost(rec, up)
                 gateway.db.insert(**rec)
             except Exception as exc:
@@ -315,8 +324,12 @@ def create_gateway_router(gateway: Gateway) -> APIRouter:
 
                 async def relay():
                     """纯直通：结束后按约定记 0，看板打「流式无usage」标记。"""
+                    first_seen = False
                     try:
                         async for chunk in resp.aiter_bytes():
+                            if not first_seen:
+                                first_seen = True
+                                rec["first_token_ms"] = _elapsed_ms(t0)
                             yield chunk
                     finally:
                         await resp.aclose()
@@ -327,8 +340,12 @@ def create_gateway_router(gateway: Gateway) -> APIRouter:
                     """旁路观察直通：字节原样转发（先 yield 后扫描，零额外延迟），
                     同时逐行扫描 SSE 提取 usage / tool_calls 入库。"""
                     buf = b""
+                    first_seen = False
                     try:
                         async for chunk in resp.aiter_bytes():
+                            if not first_seen:
+                                first_seen = True
+                                rec["first_token_ms"] = _elapsed_ms(t0)
                             yield chunk
                             buf += chunk
                             while True:  # 只处理完整行，残行留到下一轮
